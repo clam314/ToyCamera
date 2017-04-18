@@ -32,6 +32,9 @@ public class CameraSurfaceView extends SurfaceView implements SurfaceHolder.Call
     private int mScreenWidth;
     private int mScreenHeight;
 
+    private int mWidth;
+    private int mHeight;
+
     public CameraSurfaceView(Context context) {
         this(context,null);
     }
@@ -60,33 +63,32 @@ public class CameraSurfaceView extends SurfaceView implements SurfaceHolder.Call
         holder.setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
     }
 
+
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+        mWidth = w;
+        mHeight = h;
+    }
+
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
         Log.i(TAG, "surfaceCreated");
-        if(mCamera == null){
-            mCamera = Camera.open();
-            try {
-                mCamera.setPreviewDisplay(holder);
-            }catch (IOException e){
-                e.printStackTrace();
-            }
-        }
+        CameraUtil.getInstance().init(holder, "",CameraUtil.Type_Camera_Front);
     }
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
         Log.i(TAG,"surfaceChanged");
-        setCameraParams(mCamera,mScreenWidth,mScreenHeight);
-        mCamera.startPreview();
+        CameraUtil.getInstance().setCameraParams(this,mWidth,mHeight);
+        CameraUtil.getInstance().startPreView();
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         Log.i(TAG, "surfaceDestroyed");
-        mCamera.stopPreview();//停止预览
-        mCamera.release();//释放相机资源
-        mCamera = null;
         holder = null;
+        CameraUtil.getInstance().release();
     }
 
     @Override
@@ -96,139 +98,20 @@ public class CameraSurfaceView extends SurfaceView implements SurfaceHolder.Call
         }
     }
 
-    private void setCameraParams(Camera camera, int width, int height) {
-        Log.i(TAG,"setCameraParams  width="+width+"  height="+height);
-        Camera.Parameters parameters = mCamera.getParameters();
-        // 获取摄像头支持的PictureSize列表
-        List<Camera.Size> pictureSizeList = parameters.getSupportedPictureSizes();
-        for (Camera.Size size : pictureSizeList) {
-            Log.i(TAG, "pictureSizeList size.width=" + size.width + "  size.height=" + size.height);
-        }
-        /**从列表中选取合适的分辨率*/
-        Camera.Size picSize = getProperSize(pictureSizeList, ((float) height / width));
-        if (null == picSize) {
-            Log.i(TAG, "null == picSize");
-            picSize = parameters.getPictureSize();
-        }
-        Log.i(TAG, "picSize.width=" + picSize.width + "  picSize.height=" + picSize.height);
-        // 根据选出的PictureSize重新设置SurfaceView大小
-        float w = picSize.width;
-        float h = picSize.height;
-        parameters.setPictureSize(picSize.width,picSize.height);
-        this.setLayoutParams(new FrameLayout.LayoutParams((int) (height*(h/w)), height));
-
-        // 获取摄像头支持的PreviewSize列表
-        List<Camera.Size> previewSizeList = parameters.getSupportedPreviewSizes();
-
-        for (Camera.Size size : previewSizeList) {
-            Log.i(TAG, "previewSizeList size.width=" + size.width + "  size.height=" + size.height);
-        }
-        Camera.Size preSize = getProperSize(previewSizeList, ((float) height) / width);
-        if (null != preSize) {
-            Log.i(TAG, "preSize.width=" + preSize.width + "  preSize.height=" + preSize.height);
-            parameters.setPreviewSize(preSize.width, preSize.height);
-        }
-
-        parameters.setJpegQuality(100); // 设置照片质量
-        if (parameters.getSupportedFocusModes().contains(android.hardware.Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE)) {
-            parameters.setFocusMode(android.hardware.Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);// 连续对焦模式
-        }
-
-        mCamera.cancelAutoFocus();//自动对焦。
-        // 设置PreviewDisplay的方向，效果就是将捕获的画面旋转多少度显示
-        // TODO 这里直接设置90°不严谨，具体见https://developer.android.com/reference/android/hardware/Camera.html#setPreviewDisplay%28android.view.SurfaceHolder%29
-        mCamera.setDisplayOrientation(90);
-        mCamera.setParameters(parameters);
-    }
-
-    private Camera.Size getProperSize(List<Camera.Size> pictureSizeList, float screenRatio) {
-        Log.i(TAG, "screenRatio=" + screenRatio);
-        Camera.Size result = null;
-        for (Camera.Size size : pictureSizeList) {
-            float currentRatio = ((float) size.width) / size.height;
-            if (currentRatio - screenRatio == 0) {
-                result = size;
-                break;
-            }
-        }
-
-        if (null == result) {
-            for (Camera.Size size : pictureSizeList) {
-                float curRatio = ((float) size.width) / size.height;
-                if (curRatio == 4f / 3) {// 默认w:h = 4:3
-                    result = size;
-                    break;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    // 拍照瞬间调用
-    private Camera.ShutterCallback shutter = new Camera.ShutterCallback() {
-        @Override
-        public void onShutter() {
-            Log.i(TAG,"shutter");
-        }
-    };
-
-    // 获得没有压缩过的图片数据
-    private Camera.PictureCallback raw = new Camera.PictureCallback() {
-        @Override
-        public void onPictureTaken(byte[] data, Camera Camera) {
-            Log.i(TAG, "raw");
-        }
-    };
-
-    //创建jpeg图片回调数据对象
-    private Camera.PictureCallback jpeg = new Camera.PictureCallback() {
-        @Override
-        public void onPictureTaken(byte[] data, Camera Camera) {
-            BufferedOutputStream bos = null;
-            Bitmap bm = null;
-            try {
-                // 获得图片
-                bm = BitmapFactory.decodeByteArray(data, 0, data.length);
-                if (Environment.getExternalStorageState().equals(Environment.MEDIA_MOUNTED)) {
-                    Log.i(TAG, "Environment.getExternalStorageDirectory()="+Environment.getExternalStorageDirectory());
-                    String name = System.currentTimeMillis()+".jpg";
-                    String filePath = Environment.getExternalStorageDirectory()+"/ToyCamera";//照片保存路径
-                    File path = new File(filePath);
-                    if(!path.exists()){
-                        path.mkdirs();
-                    }
-                    File file = new File(path,name);
-                    if (!file.exists()){
-                        file.createNewFile();
-                    }
-                    bos = new BufferedOutputStream(new FileOutputStream(file));
-                    bm.compress(Bitmap.CompressFormat.JPEG, 100, bos);//将图片压缩到流中
-
-                }else{
-                    Toast.makeText(getContext(),"没有检测到内存卡", Toast.LENGTH_SHORT).show();
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                try {
-                    bos.flush();//输出
-                    bos.close();//关闭
-                    bm.recycle();// 回收bitmap空间
-                    mCamera.stopPreview();// 关闭预览
-                    mCamera.startPreview();// 开启预览
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-
-        }
-    };
 
     public void takePicture(){
-        //设置参数,并拍照
-        setCameraParams(mCamera, mScreenWidth, mScreenHeight);
-        // 当调用camera.takePiture方法后，camera关闭了预览，这时需要调用startPreview()来重新开启预览
-        mCamera.takePicture(null, null, jpeg);
+        CameraUtil.getInstance().setCameraParams(this,mWidth,mHeight);
+        CameraUtil.getInstance().takePicture(new CameraUtil.TakePhotoListener() {
+            @Override
+            public void onTakePhoto(String info) {
+                if("没有检测到内存卡".equals(info)){
+                    Toast.makeText(getContext(),"没有检测到内存卡", Toast.LENGTH_SHORT).show();
+                }else if(!"error".equals(info)){
+                    Toast.makeText(getContext(),"照片已经保存到"+info, Toast.LENGTH_SHORT).show();
+                }else {
+                    Toast.makeText(getContext(),"发生异常", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
     }
 }
